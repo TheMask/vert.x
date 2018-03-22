@@ -98,24 +98,15 @@ public class ConnectionPoolTest extends VertxTestBase {
   public void testConnectSuccess() {
     FakeConnectionProvider connector = new FakeConnectionProvider();
     FakeConnectionManager mgr = new FakeConnectionManager(3, 4, connector);
-    AtomicReference<Boolean> initLock = new AtomicReference<>();
     AtomicReference<Boolean> handleLock = new AtomicReference<>();
     FakeWaiter waiter = new FakeWaiter() {
       @Override
-      public synchronized void initConnection(ContextInternal ctx, FakeConnection conn) {
-        assertNull(Vertx.currentContext());
-        assertSame(ctx, context);
-        Pool<FakeConnection> pool = mgr.pool();
-        initLock.set(Thread.holdsLock(pool));
-        super.initConnection(ctx, conn);
-      }
-      @Override
-      public synchronized boolean handleConnection(ContextInternal ctx, FakeConnection conn) throws Exception {
+      public synchronized void handleConnection(ContextInternal ctx, FakeConnection conn) {
         assertNull(Vertx.currentContext());
         assertSame(ctx, context);
         Pool<FakeConnection> pool = mgr.pool();
         handleLock.set(Thread.holdsLock(pool));
-        return super.handleConnection(ctx, conn);
+        super.handleConnection(ctx, conn);
       }
     };
     mgr.getConnection(waiter);
@@ -123,8 +114,6 @@ public class ConnectionPoolTest extends VertxTestBase {
     conn.connect();
     assertWaitUntil(waiter::isComplete);
     assertEquals(Boolean.FALSE, handleLock.get());
-    assertEquals(Boolean.FALSE, initLock.get());
-    assertWaitUntil(() -> waiter.isInitialized(conn));
     waiter.assertSuccess(conn);
     waiter.recycle();
     assertEquals(0, mgr.size());
@@ -152,7 +141,6 @@ public class ConnectionPoolTest extends VertxTestBase {
     conn.fail(failure);
     assertWaitUntil(waiter::isComplete);
     assertEquals(Boolean.FALSE, holdsLock.get());
-    waiter.assertNotInitialized();
     waiter.assertFailure(failure);
   }
 
@@ -165,12 +153,10 @@ public class ConnectionPoolTest extends VertxTestBase {
     FakeConnection conn = connector.assertRequest();
     waiter.cancel();
     conn.connect();
-    assertWaitUntil(() -> mgr.size() == 1);
-    assertWaitUntil(() -> waiter.isInitialized(conn));
     assertWaitUntil(waiter::isComplete);
     assertFalse(waiter.isSuccess());
     assertFalse(waiter.isFailure());
-    assertTrue(mgr.contains(conn));
+    assertFalse(mgr.contains(conn));
   }
 
   @Test
@@ -225,6 +211,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     assertWaitUntil(waiter2::isSuccess);
   }
 
+  /*
   @Test
   public void testWaiterThrowsException() {
     FakeConnectionProvider connector = new FakeConnectionProvider();
@@ -241,6 +228,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     conn.connect();
     assertEquals(0, mgr.size());
   }
+  */
 
   @Test
   public void testEndpointLifecycle() {
@@ -348,6 +336,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     assertWaitUntil(waiter4::isFailure); // Full
   }
 
+  /*
   @Test
   public void testDiscardConnectionDuringInit() {
     FakeConnectionProvider connector = new FakeConnectionProvider();
@@ -365,6 +354,7 @@ public class ConnectionPoolTest extends VertxTestBase {
     assertWaitUntil(() -> connector.requests() == 1); // Connection close during init - reattempt to connect
     assertFalse(mgr.closed());
   }
+  */
 
   @Test
   public void testStress() {
@@ -398,15 +388,11 @@ public class ConnectionPoolTest extends VertxTestBase {
             }
 
             @Override
-            public void initConnection(ContextInternal ctx, FakeConnection conn) {
-            }
-
-            @Override
-            public boolean handleConnection(ContextInternal ctx, FakeConnection conn) throws Exception {
+            public void handleConnection(ContextInternal ctx, FakeConnection conn) {
               int action = ThreadLocalRandom.current().nextInt(100);
               if (action < -1) {
                 latch.countDown();
-                return false;
+                conn.listener.onRecycle(true);
               } /* else if (i < 30) {
                 latch.countDown();
                 throw new Exception();
@@ -419,7 +405,6 @@ public class ConnectionPoolTest extends VertxTestBase {
                   }
                   latch.countDown();
                 });
-                return true;
               }
             }
           });
@@ -453,7 +438,6 @@ public class ConnectionPoolTest extends VertxTestBase {
 
   class FakeWaiter extends Waiter<FakeConnection> {
 
-    private FakeConnection init;
     private boolean cancelled;
     private boolean completed;
     private Object result;
@@ -471,13 +455,6 @@ public class ConnectionPoolTest extends VertxTestBase {
       }
     }
 
-    synchronized boolean isInitialized(FakeConnection conn) {
-      return init == conn;
-    }
-
-    synchronized void assertNotInitialized() {
-      assertSame(null, init);
-    }
     synchronized void assertSuccess(FakeConnection conn) {
       assertSame(conn, result);
     }
@@ -506,24 +483,16 @@ public class ConnectionPoolTest extends VertxTestBase {
     }
 
     @Override
-    public synchronized void initConnection(ContextInternal ctx, FakeConnection conn) {
-      assertNull(init);
-      assertNotNull(conn);
-      init = conn;
-    }
-
-    @Override
-    public synchronized boolean handleConnection(ContextInternal ctx, FakeConnection conn) throws Exception {
+    public synchronized void handleConnection(ContextInternal ctx, FakeConnection conn) {
       assertFalse(completed);
       completed = true;
       if (cancelled) {
-        return false;
+        conn.listener.onRecycle(true);
       } else {
         synchronized (conn) {
           conn.inflight++;
         }
         result = conn;
-        return true;
       }
     }
 
