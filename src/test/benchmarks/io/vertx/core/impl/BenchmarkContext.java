@@ -31,11 +31,11 @@ public class BenchmarkContext extends ContextImpl {
 
   @Override
   protected void executeAsync(Handler<Void> task) {
-    wrapTask(null, task, true, null).run();
+    wrapTask(task, true, null).run();
   }
 
   public void runDirect(Handler<Void> task) {
-    wrapTask(null, task, true, null).run();
+    wrapTask(task, true, null).run();
   }
 
   @Override
